@@ -19,12 +19,12 @@ steps:
     jdkArchitectureOption: 'x64'
     publishJUnitResults: true
     testResultsFiles: '**/surefire-reports/TEST-*.xml'
-    goals: 'clean install'
+    goals: 'package'
 
 - task: CopyFiles@2
   inputs:
-    Contents: '**'
-    TargetFolder: '$(Build.ArtifactStagingDirectory)'
+    Contents: '**/*.war'
+    TargetFolder: '$(Build.ArtifactStagingdirectory)'
 
 - task: PublishBuildArtifacts@1
   inputs:
