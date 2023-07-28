@@ -1,4 +1,19 @@
-name: 1.0.$(date:yyMM).$(date:dd)$(rev:rr)
+
+      - task: DotNetCoreCLI@2
+        displayName: 'Run Tests and Generate Code Coverage'
+        inputs:
+          command: 'test'
+          projects: 'src/_Test/**/*.csproj'
+          arguments: '--configuration $(BuildConfiguration) /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
+
+      - task: PublishCodeCoverageResults@1
+        displayName: 'Publish Code Coverage Results'
+        inputs:
+          codeCoverageTool: 'Cobertura'
+          summaryFileLocation: '$(Common.TestResultsDirectory)/coverage.cobertura.xml'
+          reportDirectory: '$(Common.TestResultsDirectory)/CoverageReport'
+
+  name: 1.0.$(date:yyMM).$(date:dd)$(rev:rr)
 
 trigger:
 - none
