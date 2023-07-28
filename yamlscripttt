@@ -1,0 +1,158 @@
+name: 1.0.$(date:yyMM).$(date:dd)$(rev:rr)
+
+trigger:
+- none
+
+pool:
+  vmImage: windows-2019
+
+resources:
+  repositories:
+  - repository: Orca
+    name:
+    type: git
+    ref: refs/heads/GR/YAMLpipelines
+
+  - repository: templates
+    type: git
+    name: 
+    ref: refs/heads/main
+
+  - repository: buildsystem
+    type: git
+    name:
+    ref: refs/heads/master
+  
+parameters: 
+- name: secPollingTimeout
+  type: string 
+  default: '300' 
+- name: enableBuilderBreaker
+  type: boolean 
+  default: true
+
+variables:
+- group: build-engage-orca-devicemanagem
+- name: BuildConfiguration
+  value: Debug
+
+jobs: 
+- template: infrastructure/builds/templates/jobs-est.yml@buildsystem
+
+- job: BuildPipeline
+  steps:
+  - task: SonarQubePrepare@5
+    inputs:
+        SonarQube: 'SonarQube'
+        scannerMode: 'MSBuild'
+        projectKey: 'ircost'
+        projectName: 'ircost'
+        projectVersion: '$(Build.BuildNumber)'
+        extraProperties: |
+            sonar.cs.opencover.reportsPaths=$(Common.TestResultsDirectory)/pbf.opencover.xml
+            sonar.verbose=true
+  - task: NuGetToolInstaller@1
+    displayName: 'Use NuGet 6.x'
+    inputs:
+        versionSpec: 6.0.0
+        checkLatest: true
+
+  - task: NuGetCommand@2
+    displayName: 'NuGet restore src/*.sln'
+    inputs:
+        restoreSolution: 'src/*.sln'
+        feedsToUse: config
+        nugetConfigPath: src/.nuget/NuGet.Config
+
+  - task: Assembly-Info-Task@1
+    name: AssemblyInfoTask1
+    displayName: 'Set Assembly Manifest Data'
+    inputs:
+        FileNames: |
+          AssemblyInfo.cs
+          GlobalAssemblyInfo.cs
+        VersionNumber: $(Build.BuildNumber)
+        FileVersionNumber: $(Build.BuildNumber)
+        InformationalVersion: $(Build.BuildNumber)
+
+  - task: UseDotnet@2
+    name: UseDotnet2
+    displayName: 'Use .NET Core sdk'
+    inputs:
+      versions: 6.0.0
+      packageType: runtime
+      includePreviewVersions: true
+
+  - task: VisualStudioTestPlatformInstaller@1
+    inputs:
+      packageFeedSelector: 'nugetOrg'
+      versionSelector: 'latestPreRelease'
+
+  - task: VSBuild@1
+    name: VSBuild_1
+    displayName: Build solution src/*.sln
+    inputs:
+        solution: src/*.sln
+        msbuildArgs: /p:TargetProfile=Integration2Cloud /t:Publish
+        platform: 'any cpu'
+        configuration: '$(BuildConfiguration)'
+
+  - task: VSTest@2
+    name: VSTest_4
+    displayName: Test Assemblies src\**\$(BuildConfiguration)\*Test*.dll;-:**\obj\**
+    inputs:
+        testAssembly: src\**\$(BuildConfiguration)\*Test*.dll;-:**\obj\**
+        codeCoverageEnabled: true
+        Diagnostics: true
+        vsTestVersion: latest
+        platform: $(BuildPlatform)
+        configuration: $(BuildConfiguration)
+  
+
+  
+  - task: CopyFiles@1
+    displayName: 'Copy Files to: $(build.artifactstagingdirectory)'
+    condition: succeededOrFailed()
+    inputs:
+        SourceFolder: '$(build.sourcesdirectory)'
+        Contents: '**\bin\$(BuildConfiguration)\**'
+        TargetFolder: '$(build.artifactstagingdirectory)'
+
+  - task: CopyFiles@2
+    displayName: 'Copy Files: Sql Migration Batch File'
+    continueOnError: True
+    inputs:
+        SourceFolder: $(build.sourcesdirectory)\database\releases\
+        Contents: migrate_sql.bat
+        TargetFolder: $(build.artifactstagingdirectory)/db
+
+  - task: CopyFiles@2
+    displayName: 'Copy Files: Sql Migration Scripts'
+    continueOnError: True
+    inputs:
+        SourceFolder: $(build.sourcesdirectory)\database\releases\current
+        Contents: '*.sql'
+        TargetFolder: $(build.artifactstagingdirectory)/db/scripts
+
+  - task: SonarQubeAnalyze@5
+    inputs:
+      jdkversion: 'JAVA_HOME_11_X64'
+  - task: SonarQubePublish@4
+    displayName: 'Publish Quality Gate Result'
+    inputs:
+        pollingTimeoutSec: '${{parameters.secPollingTimeout}}'
+    
+  - task: sonar-buildbreaker@7
+    displayName: 'Break build on quality gate failure'
+    condition: ${{parameters.enableBuilderBreaker}}
+    inputs:
+        SonarQube: 'SonarQube'
+
+  - task: PublishBuildArtifacts@1
+    displayName: 'Publish Artifact: drop'
+    condition: succeededOrFailed()
+    inputs:
+     PathtoPublish: '$(build.artifactstagingdirectory)'
+     
+
+  
