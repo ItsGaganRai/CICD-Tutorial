@@ -1,173 +1,106 @@
-
-      - task: DotNetCoreCLI@2
-        displayName: 'Run Tests and Generate Code Coverage'
-        inputs:
-          command: 'test'
-          projects: 'src/_Test/**/*.csproj'
-          arguments: '--configuration $(BuildConfiguration) /p:CollectCoverage=true /p:CoverletOutputFormat=cobertura'
-
-      - task: PublishCodeCoverageResults@1
-        displayName: 'Publish Code Coverage Results'
-        inputs:
-          codeCoverageTool: 'Cobertura'
-          summaryFileLocation: '$(Common.TestResultsDirectory)/coverage.cobertura.xml'
-          reportDirectory: '$(Common.TestResultsDirectory)/CoverageReport'
-
-  name: 1.0.$(date:yyMM).$(date:dd)$(rev:rr)
-
-trigger:
-- none
-
-pool:
-  vmImage: windows-2019
-
-resources:
-  repositories:
-  - repository: Orca
-    name:
-    type: git
-    ref: refs/heads/GR/YAMLpipelines
-
-  - repository: templates
-    type: git
-    name: 
-    ref: refs/heads/main
-
-  - repository: buildsystem
-    type: git
-    name:
-    ref: refs/heads/master
-  
-parameters: 
-- name: secPollingTimeout
-  type: string 
-  default: '300' 
-- name: enableBuilderBreaker
-  type: boolean 
-  default: true
-
-variables:
-- group: build-engage-orca-devicemanagem
-- name: BuildConfiguration
-  value: Debug
-
-jobs: 
-- template: infrastructure/builds/templates/jobs-est.yml@buildsystem
-
-- job: BuildPipeline
-  steps:
-  - task: SonarQubePrepare@5
-    inputs:
-        SonarQube: 'SonarQube'
-        scannerMode: 'MSBuild'
-        projectKey: 'ircost'
-        projectName: 'ircost'
-        projectVersion: '$(Build.BuildNumber)'
+steps:
+  - ${{ if and(ne(variables['Build.Reason'], 'PullRequest'), in(variables['Build.SourceBranchName'], 'master', 'dev' )) }}:
+    - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+      displayName: 'Prepare analysis on SonarQube for Normal Builds'
+      inputs:
+        SonarQube: SonarQube
+        scannerMode: Other
         extraProperties: |
-            sonar.cs.opencover.reportsPaths=$(Common.TestResultsDirectory)/pbf.opencover.xml
-            sonar.verbose=true
-  - task: NuGetToolInstaller@1
-    displayName: 'Use NuGet 6.x'
-    inputs:
-        versionSpec: 6.0.0
-        checkLatest: true
+          # Additional properties that will be passed to the scanner, 
+          # Put one key=value per line, example:
+          sonar.exclusions=$(sonarExclusions)
+          sonar.projectName=$(sonarProjectName)
+          sonar.projectKey=$(sonarProjectKey)
+          sonar.projectVersion=$(Build.BuildNumber)
+         
+          #Coverage Report
+          sonar.coverage.exclusions="$(sonarCoverageExclusions)"
+          sonar.java.coveragePlugin=jacoco
+          sonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/jacoco$(variantName)TestReport/jacoco$(variantName)TestReport.xml
 
-  - task: NuGetCommand@2
-    displayName: 'NuGet restore src/*.sln'
-    inputs:
-        restoreSolution: 'src/*.sln'
-        feedsToUse: config
-        nugetConfigPath: src/.nuget/NuGet.Config
+  - ${{ if and(ne(variables['Build.Reason'], 'PullRequest'), notin(variables['Build.SourceBranchName'], 'master', 'dev' )) }}:
+    - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+      displayName: 'Prepare analysis on SonarQube for Branch Analysis'
+      inputs:
+        SonarQube: SonarQube
+        scannerMode: Other
+        extraProperties: |
+          # Additional properties that will be passed to the scanner, 
+          # Put one key=value per line, example:
+          sonar.exclusions= $(sonarExclusions)
+          sonar.projectName=$(sonarProjectName)
+          sonar.projectKey=$(sonarProjectKey)
+          sonar.projectVersion=$(Build.BuildNumber)
+          
+          sonar.branch.name=$(Build.SourceBranchName)
+          sonar.branch.target=$(sonarBaseBranch)
+         
+          #Coverage Report
+          sonar.coverage.exclusions="$(sonarCoverageExclusions)"
+          sonar.java.coveragePlugin=jacoco
+          sonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/jacoco$(variantName)TestReport/jacoco$(variantName)TestReport.xml
+          
+  - ${{ if eq(variables['Build.Reason'], 'PullRequest') }}:
+    - bash: |
+        strippedSourceBranchName="$(echo $(System.PullRequest.SourceBranch) | sed  's/refs\/heads\///g')"
+        strippedTargetBranchName="$(echo $(System.PullRequest.TargetBranch) | sed  's/refs\/heads\///g')"
 
-  - task: Assembly-Info-Task@1
-    name: AssemblyInfoTask1
-    displayName: 'Set Assembly Manifest Data'
-    inputs:
-        FileNames: |
-          AssemblyInfo.cs
-          GlobalAssemblyInfo.cs
-        VersionNumber: $(Build.BuildNumber)
-        FileVersionNumber: $(Build.BuildNumber)
-        InformationalVersion: $(Build.BuildNumber)
+        echo "##vso[task.setvariable variable=strippedSourceBranchName]$strippedSourceBranchName"
+        echo "##vso[task.setvariable variable=strippedTargetBranchName]$strippedTargetBranchName"
 
-  - task: UseDotnet@2
-    name: UseDotnet2
-    displayName: 'Use .NET Core sdk'
-    inputs:
-      versions: 6.0.0
-      packageType: runtime
-      includePreviewVersions: true
+        echo "Sonar Pull Request Analysis $strippedSourceBranchName => $strippedTargetBranchName"
+      displayName: "Format branch names for SonarQube"
 
-  - task: VisualStudioTestPlatformInstaller@1
-    inputs:
-      packageFeedSelector: 'nugetOrg'
-      versionSelector: 'latestPreRelease'
+    - task: SonarSource.sonarqube.15B84CA1-B62F-4A2A-A403-89B77A063157.SonarQubePrepare@4
+      displayName: 'Prepare analysis on SonarQube for Pull Requests'
+      inputs:
+        SonarQube: SonarQube
+        scannerMode: Other
+        extraProperties: |
+          # Additional properties that will be passed to the scanner, 
+          # Put one key=value per line, example:
+          sonar.exclusions=$(sonarExclusions)
+          sonar.projectName=$(sonarProjectName)
+          sonar.projectKey=$(sonarProjectKey)
+          sonar.projectVersion=$(Build.BuildNumber)
 
-  - task: VSBuild@1
-    name: VSBuild_1
-    displayName: Build solution src/*.sln
-    inputs:
-        solution: src/*.sln
-        msbuildArgs: /p:TargetProfile=Integration2Cloud /t:Publish
-        platform: 'any cpu'
-        configuration: '$(BuildConfiguration)'
-
-  - task: VSTest@2
-    name: VSTest_4
-    displayName: Test Assemblies src\**\$(BuildConfiguration)\*Test*.dll;-:**\obj\**
-    inputs:
-        testAssembly: src\**\$(BuildConfiguration)\*Test*.dll;-:**\obj\**
-        codeCoverageEnabled: true
-        Diagnostics: true
-        vsTestVersion: latest
-        platform: $(BuildPlatform)
-        configuration: $(BuildConfiguration)
-  
-
-  
-  - task: CopyFiles@1
-    displayName: 'Copy Files to: $(build.artifactstagingdirectory)'
-    condition: succeededOrFailed()
-    inputs:
-        SourceFolder: '$(build.sourcesdirectory)'
-        Contents: '**\bin\$(BuildConfiguration)\**'
-        TargetFolder: '$(build.artifactstagingdirectory)'
-
-  - task: CopyFiles@2
-    displayName: 'Copy Files: Sql Migration Batch File'
-    continueOnError: True
-    inputs:
-        SourceFolder: $(build.sourcesdirectory)\database\releases\
-        Contents: migrate_sql.bat
-        TargetFolder: $(build.artifactstagingdirectory)/db
-
-  - task: CopyFiles@2
-    displayName: 'Copy Files: Sql Migration Scripts'
-    continueOnError: True
-    inputs:
-        SourceFolder: $(build.sourcesdirectory)\database\releases\current
-        Contents: '*.sql'
-        TargetFolder: $(build.artifactstagingdirectory)/db/scripts
-
-  - task: SonarQubeAnalyze@5
-    inputs:
-      jdkversion: 'JAVA_HOME_11_X64'
-  - task: SonarQubePublish@4
-    displayName: 'Publish Quality Gate Result'
-    inputs:
-        pollingTimeoutSec: '${{parameters.secPollingTimeout}}'
+          sonar.pullrequest.branch=$(strippedSourceBranchName)
+          sonar.pullrequest.base=$(strippedTargetBranchName)
+         
+          #Coverage Report
+          sonar.coverage.exclusions=$(sonarCoverageExclusions)
+          sonar.java.coveragePlugin=jacoco
+          sonar.coverage.jacoco.xmlReportPaths=build/reports/jacoco/jacoco$(variantName)TestReport/jacoco$(variantName)TestReport.xml      
     
-  - task: sonar-buildbreaker@7
-    displayName: 'Break build on quality gate failure'
-    condition: ${{parameters.enableBuilderBreaker}}
-    inputs:
-        SonarQube: 'SonarQube'
-
-  - task: PublishBuildArtifacts@1
-    displayName: 'Publish Artifact: drop'
-    condition: succeededOrFailed()
-    inputs:
-     PathtoPublish: '$(build.artifactstagingdirectory)'
-     
-
   
+  - task: Gradle@2
+    displayName: 'Unit Test'
+    inputs:
+      workingDirectory: ''
+      gradleWrapperFile: 'gradlew'
+      gradleOptions: '-Xmx3072m'
+      publishJUnitResults: true
+      testResultsFiles: '**/TEST-*.xml'    
+      testRunTitle: 'Unit Testing'
+      tasks: 'jacoco$(variantName)TestReport --stacktrace --info'
+      sonarQubeRunAnalysis: true
+      sqGradlePluginVersionChoice: 'specify'
+      sonarQubeGradlePluginVersion: '3.3'
+
+  - task: PublishCodeCoverageResults@1
+    displayName: 'Publish coverage report'
+    inputs:
+      codeCoverageTool: 'JaCoCo'
+      pathToSources: $(System.DefaultWorkingDirectory)/$(packageName)/$(coverageSrcDirectory)/
+      summaryFileLocation: $(System.DefaultWorkingDirectory)/$(packageName)/build/reports/jacoco/jacoco$(variantName)TestReport/jacoco$(variantName)TestReport.xml
+      additionalCodeCoverageFiles: $(System.DefaultWorkingDirectory)/$(packageName)/build/jacoco/test$(variantName)UnitTest.exec
+      reportDirectory: $(System.DefaultWorkingDirectory)/$(packageName)/build/reports/jacoco/jacoco$(variantName)TestReport/html/
+      failIfCoverageEmpty: false
+
+  - task: SonarSource.sonarqube.291ed61f-1ee4-45d3-b1b0-bf822d9095ef.SonarQubePublish@4
+    displayName: 'Publish Quality Gate Result'
+
+  - task: SimondeLang.sonar-buildbreaker.sonar-buildbreaker.sonar-buildbreaker@7
+    displayName: 'Break build on quality gate failure'
+    inputs:
+      SonarQube: SonarQube
